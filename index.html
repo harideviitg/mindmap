@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Haridev</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FFFFFF;
+    --panel-bg: #FFFFFF;
+    --ink: #1A1A1A;
+    --ink-soft: #4A4A4A;
+    --line: #1A1A1A;
+    --line-dashed: #BEBDB6;
+    --rule: #D8D6CE;
+    --accent: #D9622B;
+    --link-blue: #3B5BA5;
+    --grey-label: #8A8A82;
+    --font: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: var(--bg);
+    font-family: var(--font);
+    overflow: hidden;
+  }
+  #app { position: relative; width: 100vw; height: 100vh; display: flex; }
+
+  #canvasWrap { flex: 1; position: relative; overflow: hidden; }
+  svg#graph { width: 100%; height: 100%; display: block; cursor: grab; }
+  svg#graph:active { cursor: grabbing; }
+
+  .link { fill: none; stroke: var(--line); stroke-width: 1; }
+  .link.dashed { stroke: var(--line-dashed); stroke-dasharray: 2 7; }
+
+  .node-group { cursor: pointer; }
+  .hit-area { cursor: pointer; }
+  .node-group:active .hit-area { cursor: grabbing; }
+
+  /* halo sits behind the visible glyph and is painted in the bg color,
+     so any line passing underneath is visually clipped at the text */
+  .node-label, .node-sub {
+    paint-order: stroke fill;
+    stroke: var(--bg);
+    stroke-width: 5px;
+    stroke-linejoin: round;
+  }
+  .node-label {
+    fill: var(--ink);
+    font-size: 15px;
+    pointer-events: none;
+  }
+  .node-label.root-label { font-size: 17px; }
+  .node-label.dim { fill: var(--grey-label); }
+  .node-sub {
+    fill: var(--grey-label);
+    font-size: 12px;
+    pointer-events: none;
+    text-decoration: underline;
+  }
+
+  /* halo behind icon shapes too, so a line can't visually cross a node marker */
+  .icon-halo {
+    fill: var(--bg);
+    stroke: var(--bg);
+    stroke-width: 6px;
+  }
+
+  .icon-stroke { fill: none; stroke: var(--ink); stroke-width: 1.3; transition: fill 0.15s ease; }
+
+  /* clicked node fills solid dark so it's obvious which one is open */
+  .node-group.selected .icon-stroke { fill: var(--ink); }
+  .node-group.selected .icon-num { fill: #FFFFFF; }
+  .node-group.selected .icon-dot { fill: #FFFFFF; }
+  .icon-dot { fill: var(--ink); }
+  .icon-num {
+    fill: var(--ink);
+    font-family: var(--font);
+    font-size: 12px;
+    text-anchor: middle;
+    pointer-events: none;
+  }
+
+  .root-brain path {
+    fill: none;
+    stroke: var(--ink);
+    stroke-width: 1.3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: stroke 0.15s ease;
+  }
+  .node-group.selected .root-brain path { fill: var(--ink); }
+
+  /* Right sidebar reader, opened by clicking any graph node */
+  #sidebar {
+    flex-shrink: 0;
+    width: 0;
+    height: 100%;
+    background: var(--panel-bg);
+    border-left: 0px solid var(--rule);
+    overflow-y: auto;
+    overflow-x: hidden;
+    transition: width 0.4s ease, border-left-width 0.4s ease;
+    z-index: 5;
+  }
+  #sidebar.open {
+    width: min(440px, 90vw);
+    border-left-width: 1px;
+  }
+  #sidebar .sidebar-inner {
+    width: min(440px, 90vw);
+    padding: 44px 40px;
+    position: relative;
+  }
+  #sidebar .d-kicker { font-size: 12px; color: var(--grey-label); letter-spacing: 0.06em; margin-bottom: 10px; }
+  #sidebar h2 { font-size: 24px; margin: 0 0 18px 0; color: var(--ink); font-weight: normal; line-height: 1.25; }
+  #sidebar .d-body { font-size: 14.5px; line-height: 1.7; color: var(--ink-soft); }
+  #sidebar .d-body p { margin: 0 0 14px 0; }
+  #sidebar .d-body h1, #sidebar .d-body h2, #sidebar .d-body h3 {
+    color: var(--ink); font-weight: normal; margin: 20px 0 10px 0;
+  }
+  #sidebar .d-body a { color: var(--link-blue); }
+  #sidebar .d-body strong { color: var(--ink); }
+  #sidebar .d-body ul, #sidebar .d-body ol { padding-left: 20px; margin: 0 0 14px 0; }
+  #sidebar .d-close {
+    position: absolute; top: 18px; right: 20px; border: none; background: none;
+    font-size: 20px; cursor: pointer; color: var(--grey-label); font-family: var(--font);
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 3px; }
+
+  /* Bottom-left control panel — same paper aesthetic as the rest of the page */
+  #controls {
+    position: fixed;
+    left: 22px;
+    bottom: 68px;
+    background: var(--panel-bg);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 16px 20px;
+    display: none;
+    flex-direction: column;
+    gap: 14px;
+    width: 220px;
+    z-index: 15;
+    font-family: var(--font);
+  }
+  #controls.visible { display: flex; }
+  #bottomBar {
+    position: fixed;
+    left: 22px;
+    bottom: 22px;
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    z-index: 15;
+  }
+  #controlsToggle {
+    background: var(--panel-bg);
+    border: 1px solid var(--rule);
+    border-radius: 20px;
+    box-shadow: none;
+    padding: 0 16px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    font-family: var(--font);
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    color: var(--ink-soft);
+    cursor: pointer;
+  }
+  #controlsToggle.hidden { display: none; }
+  #resetIconBtn {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    background: var(--panel-bg);
+    border: 1px solid var(--rule);
+    border-radius: 50%;
+    box-shadow: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--ink-soft);
+    transition: color 0.15s ease, border-color 0.15s ease, transform 0.2s ease;
+  }
+  #resetIconBtn:hover { color: var(--ink); border-color: var(--ink); }
+  #resetIconBtn:active svg { transform: rotate(-90deg); }
+  #resetIconBtn svg { transition: transform 0.3s ease; }
+
+  .ctrl-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+  }
+  .ctrl-label {
+    font-size: 11px;
+    color: var(--ink-soft);
+    letter-spacing: 0.03em;
+  }
+  .ctrl-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ctrl-value {
+    font-size: 11px;
+    color: var(--grey-label);
+    width: 34px;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    width: 100%;
+    height: 2px;
+    background: var(--rule);
+    border-radius: 2px;
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    background: #FFFFFF;
+    border: 1.5px solid var(--ink);
+    box-shadow: none;
+    cursor: pointer;
+    transition: transform 0.15s ease;
+  }
+  input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+  input[type="range"]::-moz-range-thumb {
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    background: #FFFFFF;
+    border: 1.5px solid var(--ink);
+    box-shadow: none;
+    cursor: pointer;
+  }
+  input[type="range"]::-moz-range-progress {
+    background: var(--ink-soft);
+    height: 2px;
+  }
+
+  .ctrl-divider {
+    width: 100%;
+    height: 1px;
+    background: var(--rule);
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="canvasWrap">
+    <svg id="graph"></svg>
+  </div>
+  <div id="sidebar">
+    <div class="sidebar-inner">
+      <button class="d-close">&times;</button>
+      <div class="d-kicker" id="dKicker"></div>
+      <h2 id="dTitle"></h2>
+      <div class="d-body" id="dBody"></div>
+    </div>
+  </div>
+</div>
+
+<div id="controls">
+  <button id="collapseBtn" title="Hide controls" style="border:none;background:none;cursor:pointer;color:var(--grey-label);font-size:14px;align-self:flex-end;padding:0;">&minus;</button>
+
+  <div class="ctrl-group">
+    <div class="ctrl-label">Center force</div>
+    <div class="ctrl-row"><input type="range" id="sCenter" min="0" max="1" step="0.01" value="0.03"><span class="ctrl-value" id="vCenter">0.03</span></div>
+  </div>
+  <div class="ctrl-group">
+    <div class="ctrl-label">Repel force</div>
+    <div class="ctrl-row"><input type="range" id="sRepel" min="0" max="20" step="0.1" value="4"><span class="ctrl-value" id="vRepel">4.0</span></div>
+  </div>
+  <div class="ctrl-group">
+    <div class="ctrl-label">Link force</div>
+    <div class="ctrl-row"><input type="range" id="sLinkForce" min="0" max="1" step="0.01" value="0.35"><span class="ctrl-value" id="vLinkForce">0.35</span></div>
+  </div>
+  <div class="ctrl-group">
+    <div class="ctrl-label">Link distance</div>
+    <div class="ctrl-row"><input type="range" id="sLinkDist" min="40" max="300" step="1" value="100"><span class="ctrl-value" id="vLinkDist">100</span></div>
+  </div>
+
+  <div class="ctrl-divider"></div>
+
+  <div class="ctrl-group">
+    <div class="ctrl-label">Text fade threshold</div>
+    <div class="ctrl-row"><input type="range" id="sFade" min="-2" max="2" step="0.01" value="-2"><span class="ctrl-value" id="vFade">-2.0</span></div>
+  </div>
+  <div class="ctrl-group">
+    <div class="ctrl-label">Node size</div>
+    <div class="ctrl-row"><input type="range" id="sNodeSize" min="0.5" max="2" step="0.01" value="1"><span class="ctrl-value" id="vNodeSize">1.00</span></div>
+  </div>
+  <div class="ctrl-group">
+    <div class="ctrl-label">Link thickness</div>
+    <div class="ctrl-row"><input type="range" id="sLinkThick" min="0.3" max="3" step="0.01" value="1"><span class="ctrl-value" id="vLinkThick">1.00</span></div>
+  </div>
+</div>
+
+<div id="bottomBar">
+  <button id="controlsToggle">Show controls</button>
+  <button id="resetIconBtn" title="Reset graph">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+      <polyline points="21 3 21 9 15 9"></polyline>
+    </svg>
+  </button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+// ---------------------------------------------------------------
+// DATA — placeholder content. Everything here is a stand-in: swap the
+// titles and body text for your own principles, process, influences,
+// and open questions. Structure to keep in mind —
+//   ring 1: Principles / Process / Influences / Tensions (+ Info)
+//   ring 2: the specific instances under each
+// category: "path" (hexagon+number), "research" (square outline),
+//           "initiative" (triangle outline), "info" (circle+dot), "root"
+// strength: "solid" or "dashed" — dashed = still unresolved / exploratory
+// ---------------------------------------------------------------
+const nodes = [
+  { id: "root", category: "root", parent: null, title: "Haridev's Brain", sub: "2026", body: "# The thesis\nDesign is applied empathy — noticing what people can't articulate about their own friction, and building the smallest thing that removes it.\n\nThis isn't a portfolio. It's a map of how I think: the principles I argue for, the process I actually run, what shaped my taste, and what I haven't settled yet." },
+
+  { id: "info", category: "info", parent: "root", strength: "solid", title: "About", body: "This is not my portfolio — that lives at [your site link here]. This graph is about *how* I think, not *what* I've shipped. Drag any node, click to read, use the controls in the corner to reshape the graph." },
+
+  { id: "principles", category: "path", num: 1, parent: "root", strength: "solid", title: "Principles", body: "## What I actually believe\nThe stances I'll defend in a review, not the platitudes I'd put on a slide. These are opinions, not values statements — some people disagree with them, and that's the point." },
+  { id: "process", category: "path", num: 2, parent: "root", strength: "solid", title: "Process", body: "## How I actually work\nNot a five-step framework I read once. The real loop I run when a problem lands on my desk, including the parts that are messy or unglamorous." },
+  { id: "influences", category: "path", num: 3, parent: "root", strength: "solid", title: "Influences", body: "## Where my taste comes from\nThe fields, people, and ideas outside design that quietly shape how I judge good work. Most of these aren't design books." },
+  { id: "tensions", category: "path", num: 4, parent: "root", strength: "solid", title: "Open Questions", body: "## What I haven't resolved\nGenuine tensions I hold, not humble-brags. Places where two things I believe pull against each other." },
+
+  { id: "constraints", category: "research", parent: "principles", strength: "solid", title: "Constraints", sub2: "Principle", body: "**Constraints generate, freedom paralyzes.** A blank canvas is the enemy of good work. The best ideas I've had came from a brief with a hard limitation attached — a deadline, a broken component, a budget of one screen. Replace this with your real stance and the story behind it." },
+  { id: "delight-byproduct", category: "research", parent: "principles", strength: "solid", title: "Delight", sub2: "Principle", body: "**Delight is a byproduct, never a goal.** Chasing delight directly produces decoration. Delight shows up on its own once the core interaction is honest and fast. Placeholder — swap for your own take." },
+  { id: "invisible-craft", category: "research", parent: "principles", strength: "dashed", title: "Invisibility", sub2: "Principle (contested)", body: "**The best design is invisible.** I hold this loosely — sometimes I want design to announce itself. Placeholder for a principle you're less certain about." },
+
+  { id: "problem-framing", category: "artifact-dot", parent: "process", strength: "solid", title: "Framing", sub2: "Process", body: "**I spend most of my time on the question, not the answer.** Reframing the brief is usually 60% of the actual work. Describe your real ratio and an example." },
+  { id: "sketch-fast", category: "artifact-dot", parent: "process", strength: "solid", title: "Rough first", sub2: "Process", body: "**Ugly sketches before clean mockups.** Polish too early and you fall in love with the wrong idea. Placeholder — describe your actual sketching habit." },
+  { id: "kill-darlings", category: "artifact-dot", parent: "process", strength: "solid", title: "Kill it early", sub2: "Process", body: "**I throw away the first good idea on purpose.** The first solution that works is rarely the most honest one. Placeholder for your own working habit." },
+
+  { id: "architecture", category: "research-ghost", parent: "influences", strength: "dashed", title: "Architecture", sub2: "Influence", body: "**Served vs. servant spaces.** How buildings separate what's meant to be seen from what makes seeing possible. Swap for a real influence and what you actually took from it." },
+  { id: "psychology-book", category: "research-ghost", parent: "influences", strength: "dashed", title: "A book", sub2: "Influence", body: "Name the actual book, thinker, or teacher, and the one idea from it you still use. Placeholder." },
+  { id: "family-craft", category: "research-ghost", parent: "influences", strength: "dashed", title: "Early craft", sub2: "Influence", body: "A craft, a habit, a family trade — something that shaped your eye before you had a name for it. Placeholder." },
+
+  { id: "tension-taste-data", category: "initiative", parent: "tensions", strength: "dashed", title: "Taste vs. data", sub2: "Open question", body: "I don't fully know where the line is. Placeholder for a real, unresolved disagreement you have with yourself." },
+  { id: "tension-speed-craft", category: "initiative", parent: "tensions", strength: "dashed", title: "Speed vs. craft", sub2: "Open question", body: "Both matter and they fight each other constantly. Placeholder — describe where you currently land and why you're not settled." }
+];
+
+const nodesById = new Map(nodes.map(n => [n.id, n]));
+const links = nodes.filter(n => n.parent).map(n => ({ source: n.parent, target: n.id, strength: n.strength || "solid" }));
+
+// ---------------------------------------------------------------
+// Assign each node a depth (ring) and a target angle, so the layout
+// reads as an organized map instead of random scatter.
+// The four numbered branches (Principles/Process/Influences/Tensions)
+// sit at exact square corners — 45°, 135°, 225°, 315° — so the overall
+// shape reads as a clean diamond around the root, not a spread wheel.
+// "Info" gets its own fixed, close-in slot straight above the root so
+// it never competes with the four main corners.
+// ---------------------------------------------------------------
+nodesById.get("root").depth = 0;
+const ring1 = nodes.filter(n => n.parent === "root");
+const CORNER_ANGLES = [Math.PI / 4, (3 * Math.PI) / 4, (5 * Math.PI) / 4, (7 * Math.PI) / 4]; // 45/135/225/315
+
+ring1.forEach((n) => {
+  n.depth = 1;
+  if (n.category === "path") {
+    // place by explicit num (1-4) so it always lands on the same corner
+    n.angle = CORNER_ANGLES[(n.num - 1) % 4];
+    n.ring1Radius = 190;
+  } else {
+    // non-numbered ring-1 nodes (e.g. Info) sit close, straight up, out of the way
+    n.angle = -Math.PI / 2;
+    n.ring1Radius = 100;
+  }
+});
+nodes.filter(n => n.depth === undefined).forEach(n => {
+  const parent = nodesById.get(n.parent);
+  n.depth = (parent.depth || 0) + 1;
+});
+ring1.forEach(parentNode => {
+  const children = nodes.filter(n => n.parent === parentNode.id && n.depth === 2);
+  const spread = Math.PI / 6; // how wide each parent's children fan out
+  children.forEach((c, i) => {
+    const offset = children.length > 1 ? (i / (children.length - 1) - 0.5) * spread : 0;
+    c.angle = parentNode.angle + offset;
+  });
+});
+
+const RING_RADIUS = { 1: 190, 2: 460 };
+
+const svg = d3.select("#graph");
+let width = document.getElementById("canvasWrap").clientWidth;
+let height = window.innerHeight;
+const gRoot = svg.append("g");
+
+// zoom behavior is wired further below (zoomWithFade), after applyTextFade is defined
+
+// radial anchor forces: pull each node toward its designated angle at
+// its ring's radius, from the current center. Weak strength so nodes
+// still settle naturally and avoid collisions, but the overall shape
+// stays a readable diamond instead of a random clump.
+function ringRadiusOf(n) {
+  if (n.depth === 1 && n.ring1Radius != null) return n.ring1Radius;
+  return RING_RADIUS[n.depth] || RING_RADIUS[2];
+}
+function radialX(alpha) {
+  for (const n of nodes) {
+    if (n.depth === 0 || n.fx != null) continue;
+    const r = ringRadiusOf(n);
+    const targetX = width / 2 + Math.cos(n.angle) * r;
+    n.vx += (targetX - n.x) * 0.06 * alpha;
+  }
+}
+function radialY(alpha) {
+  for (const n of nodes) {
+    if (n.depth === 0 || n.fy != null) continue;
+    const r = ringRadiusOf(n);
+    const targetY = height / 2 + Math.sin(n.angle) * r;
+    n.vy += (targetY - n.y) * 0.06 * alpha;
+  }
+}
+radialX.initialize = () => {};
+radialY.initialize = () => {};
+
+// seed initial positions directly on their target ring so the graph
+// doesn't flash through a random starting scatter before settling
+nodes.forEach(n => {
+  if (n.depth === 0) { n.x = width / 2; n.y = height / 2; return; }
+  const r = ringRadiusOf(n);
+  n.x = width / 2 + Math.cos(n.angle) * r;
+  n.y = height / 2 + Math.sin(n.angle) * r;
+});
+
+// live-tunable parameters, driven by the slider panel below
+const params = {
+  centerForce: 0.03,
+  repelForce: 4,
+  linkForce: 0.35,
+  linkDistance: 100,
+  fadeThreshold: -2,
+  nodeSize: 1,
+  linkThickness: 1
+};
+
+const simulation = d3.forceSimulation(nodes)
+  .force("link", d3.forceLink(links).id(d => d.id).distance(d => params.linkDistance).strength(d => params.linkForce))
+  .force("charge", d3.forceManyBody().strength(d => (d.category === "root" ? -100 : -30) * params.repelForce))
+  .force("collide", d3.forceCollide().radius(42).strength(0.95).iterations(3))
+  .force("radialX", radialX)
+  .force("radialY", radialY)
+  .force("centerPull", (alpha) => {
+    for (const n of nodes) {
+      if (n.fx != null) continue;
+      n.vx += (width / 2 - n.x) * params.centerForce * 0.05 * alpha;
+      n.vy += (height / 2 - n.y) * params.centerForce * 0.05 * alpha;
+    }
+  })
+  .force("rootPin", () => {
+    const root = nodesById.get("root");
+    if (root.fx == null && params.centerForce < 0.02) { root.x = width / 2; root.y = height / 2; }
+    root.vx *= 0.9; root.vy *= 0.9;
+  });
+
+// layering: links at the very bottom, then a halo pass (to visually
+// cut lines out from under icons+text), then the real icons+labels on top
+const linkSel = gRoot.append("g").attr("class", "link-layer").selectAll("path")
+  .data(links).join("path")
+  .attr("class", d => "link" + (d.strength === "dashed" ? " dashed" : ""));
+
+const haloLayer = gRoot.append("g").attr("class", "halo-layer");
+const nodeLayer = gRoot.append("g").attr("class", "node-layer");
+
+const haloSel = haloLayer.selectAll("g")
+  .data(nodes).join("g")
+  .attr("class", "node-halo-group");
+
+const nodeSel = nodeLayer.selectAll("g")
+  .data(nodes).join("g")
+  .attr("class", "node-group")
+  .call(drag(simulation));
+
+// halo copies: same icon geometry, painted in bg color and slightly
+// larger, so a connector line ending underneath a node is masked
+haloSel.each(function(d) {
+  const el = d3.select(this);
+  if (d.category === "root") {
+    el.append("circle").attr("class", "icon-halo").attr("r", 20);
+  } else if (d.category === "path") {
+    el.append("rect").attr("class", "icon-halo").attr("x", -13.5).attr("y", -13.5).attr("width", 27).attr("height", 27);
+  } else if (d.category === "research" || d.category === "research-ghost" || d.category === "artifact-dot" || d.category === "initiative") {
+    el.append("polygon").attr("class", "icon-halo").attr("points", trianglePoints(14));
+  } else {
+    el.append("circle").attr("class", "icon-halo").attr("r", 13);
+  }
+});
+
+// icon builder per category
+nodeSel.each(function(d) {
+  const el = d3.select(this);
+  if (d.category === "root") {
+    // Lucide "brain" icon, scaled to sit where the old icon was and
+    // styled with the same stroke weight as every other node icon
+    const brain = el.append("g")
+      .attr("class", "root-brain")
+      .attr("transform", "translate(-13,-13) scale(1.07)");
+    brain.html(`
+      <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
+      <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
+      <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
+      <path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/>
+      <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/>
+      <path d="M3.477 10.896a4 4 0 0 1 .585-.396"/>
+      <path d="M19.938 10.5a4 4 0 0 1 .585.396"/>
+      <path d="M6 18a4 4 0 0 1-1.967-.516"/>
+      <path d="M19.967 17.484A4 4 0 0 1 18 18"/>
+    `);
+  } else if (d.category === "info") {
+    el.append("circle").attr("class", "icon-stroke").attr("r", 9);
+    el.append("circle").attr("class", "icon-dot").attr("r", 2);
+  } else if (d.category === "path") {
+    el.append("rect").attr("class", "icon-stroke").attr("x", -9.5).attr("y", -9.5).attr("width", 19).attr("height", 19);
+    el.append("text").attr("class", "icon-num").attr("dy", 4).text(d.num);
+  } else if (d.category === "research") {
+    const tri = trianglePoints(11);
+    el.append("polygon").attr("class", "icon-stroke").attr("points", tri);
+  } else if (d.category === "research-ghost") {
+    const tri = trianglePoints(11);
+    el.append("polygon").attr("class", "icon-stroke").attr("points", tri);
+  } else if (d.category === "artifact-dot") {
+    const tri = trianglePoints(11);
+    el.append("polygon").attr("class", "icon-stroke").attr("points", tri);
+    el.append("circle").attr("class", "icon-dot").attr("cy", -0.5).attr("r", 1.6);
+  } else if (d.category === "initiative") {
+    const tri = trianglePoints(11);
+    el.append("polygon").attr("class", "icon-stroke").attr("points", tri);
+    el.append("circle").attr("class", "icon-dot").attr("cy", -0.5).attr("r", 1);
+  }
+});
+
+// nodes at the far end of a dashed connector get the same low-opacity,
+// muted treatment as the dashed line itself
+nodeSel.filter(d => d.strength === "dashed")
+  .style("opacity", 0.55);
+haloSel.filter(d => d.strength === "dashed")
+  .style("opacity", 0.55);
+
+function hexPoints(r) {
+  let pts = [];
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 6 + i * Math.PI / 3;
+    pts.push(`${(r*Math.cos(a)).toFixed(2)},${(r*Math.sin(a)).toFixed(2)}`);
+  }
+  return pts.join(" ");
+}
+function trianglePoints(r) {
+  let pts = [];
+  for (let i = 0; i < 3; i++) {
+    const a = -Math.PI/2 + i * Math.PI * 2/3;
+    pts.push(`${(r*Math.cos(a)).toFixed(2)},${(r*Math.sin(a)).toFixed(2)}`);
+  }
+  return pts.join(" ");
+}
+
+// labels
+nodeSel.append("text")
+  .attr("class", d => "node-label" + (d.category === "root" ? " root-label" : "") + (d.category === "research-ghost" ? " dim" : ""))
+  .attr("text-anchor", d => d.category === "root" ? "middle" : (d.labelAnchor || "start"))
+  .attr("x", d => d.category === "root" ? 0 : 18)
+  .attr("y", d => d.category === "root" ? 34 : 4)
+  .text(d => d.title);
+
+nodeSel.filter(d => d.sub).append("text")
+  .attr("class", "node-sub")
+  .attr("text-anchor", "middle")
+  .attr("y", 52)
+  .text(d => d.sub);
+
+// invisible hit-rect, inserted BEHIND the icon/text but still inside the
+// node group, sized to the node's full visible footprint (icon + label)
+// with generous padding so there's a large, comfortable drag/click target
+// instead of just the thin icon outline
+nodeSel.each(function(d) {
+  const el = d3.select(this);
+  const bbox = this.getBBox();
+  const pad = 10;
+  el.insert("rect", ":first-child")
+    .attr("class", "hit-area")
+    .attr("x", bbox.x - pad)
+    .attr("y", bbox.y - pad)
+    .attr("width", bbox.width + pad * 2)
+    .attr("height", bbox.height + pad * 2)
+    .attr("fill", "transparent")
+    .attr("stroke", "none")
+    .style("pointer-events", "all");
+});
+
+nodeSel.on("click", (event, d) => {
+  event.stopPropagation();
+  openDetail(d);
+});
+
+simulation.on("tick", () => {
+  linkSel.attr("d", d => `M${d.source.x},${d.source.y} L${d.target.x},${d.target.y}`);
+  nodeSel.attr("transform", d => `translate(${d.x},${d.y}) scale(${params.nodeSize})`);
+  haloSel.attr("transform", d => `translate(${d.x},${d.y}) scale(${params.nodeSize})`);
+});
+
+// after first render, measure each label's real bbox and give the
+// collision force a per-node radius sized to the node's actual visible
+// area (not a worst-case corner distance), so nodes sit close without
+// their icons or text ever overlapping a neighbor's
+function measureAndApplyCollision() {
+  nodeSel.each(function(d) {
+    const bbox = this.getBBox();
+    // approximate as an ellipse-ish radius from width/height directly;
+    // since labels sit mostly to one side, half the box dimensions plus
+    // a small margin gives close, non-overlapping packing
+    d.collideRadius = Math.max(22, Math.max(bbox.width, bbox.height) / 2 + 4);
+  });
+  simulation.force("collide", d3.forceCollide().radius(d => d.collideRadius || 28).strength(1).iterations(4));
+}
+requestAnimationFrame(() => {
+  measureAndApplyCollision();
+  simulation.alpha(0.7).restart();
+});
+
+function drag(sim) {
+  function started(e, d) { if (!e.active) sim.alphaTarget(0.2).restart(); d.fx = d.x; d.fy = d.y; }
+  function dragged(e, d) { d.fx = e.x; d.fy = e.y; }
+  function ended(e, d) { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }
+  return d3.drag().on("start", started).on("drag", dragged).on("end", ended);
+}
+
+// (initial zoom transform now applied together with zoomWithFade, below)
+
+function handleResize() {
+  width = document.getElementById("canvasWrap").clientWidth;
+  height = window.innerHeight;
+  simulation.alpha(0.3).restart();
+}
+window.addEventListener("resize", handleResize);
+
+// ---------------------------------------------------------------
+// Text fade by zoom level — "Text fade threshold" mirrors Obsidian:
+// lower (more negative) threshold means labels stay visible at a
+// wider range of zoom; higher threshold fades them out sooner as
+// you zoom out.
+// ---------------------------------------------------------------
+function applyTextFade(k) {
+  const logK = Math.log2(k);
+  const t = params.fadeThreshold;
+  // fade fully in by logK >= t, fully out by logK <= t - 1.2
+  const opacity = Math.max(0, Math.min(1, (logK - (t - 1.2)) / 1.2));
+  gRoot.selectAll(".node-label, .node-sub").style("opacity", opacity);
+}
+const zoomWithFade = d3.zoom().scaleExtent([0.4, 2]).on("zoom", (e) => {
+  gRoot.attr("transform", e.transform);
+  applyTextFade(e.transform.k);
+});
+svg.call(zoomWithFade);
+svg.call(zoomWithFade.transform, d3.zoomIdentity.translate(0,0).scale(0.95));
+applyTextFade(0.95);
+
+// ---------------------------------------------------------------
+// Control panel wiring
+// ---------------------------------------------------------------
+function bindSlider(id, valueId, onChange, decimals) {
+  const input = document.getElementById(id);
+  const valueEl = document.getElementById(valueId);
+  input.addEventListener("input", () => {
+    const v = parseFloat(input.value);
+    valueEl.textContent = v.toFixed(decimals);
+    onChange(v);
+  });
+}
+
+bindSlider("sCenter", "vCenter", v => { params.centerForce = v; simulation.alpha(0.4).restart(); }, 2);
+bindSlider("sRepel", "vRepel", v => {
+  params.repelForce = v;
+  simulation.force("charge", d3.forceManyBody().strength(d => (d.category === "root" ? -100 : -30) * params.repelForce));
+  simulation.alpha(0.4).restart();
+}, 1);
+bindSlider("sLinkForce", "vLinkForce", v => {
+  params.linkForce = v;
+  simulation.force("link").strength(v);
+  simulation.alpha(0.4).restart();
+}, 2);
+bindSlider("sLinkDist", "vLinkDist", v => {
+  params.linkDistance = v;
+  simulation.force("link").distance(v);
+  simulation.alpha(0.4).restart();
+}, 0);
+bindSlider("sFade", "vFade", v => { params.fadeThreshold = v; applyTextFade(currentZoomK()); }, 2);
+bindSlider("sNodeSize", "vNodeSize", v => { params.nodeSize = v; simulation.alpha(0.1).restart(); }, 2);
+bindSlider("sLinkThick", "vLinkThick", v => {
+  params.linkThickness = v;
+  linkSel.style("stroke-width", (v * 1) + "px");
+}, 2);
+
+function currentZoomK() {
+  const t = d3.zoomTransform(svg.node());
+  return t.k;
+}
+
+const collapseBtn = document.getElementById("collapseBtn");
+const controlsPanel = document.getElementById("controls");
+const controlsToggleBtn = document.getElementById("controlsToggle");
+// panel starts hidden — the minimized "Show controls" pill is the default view
+collapseBtn.addEventListener("click", () => {
+  controlsPanel.classList.remove("visible");
+  controlsToggleBtn.classList.remove("hidden");
+});
+controlsToggleBtn.addEventListener("click", () => {
+  controlsPanel.classList.add("visible");
+  controlsToggleBtn.classList.add("hidden");
+});
+
+// Reset: restore every slider to its default, clear any pinned drag
+// positions, reseed nodes onto their ring layout, and re-center the view
+const DEFAULTS = {
+  centerForce: 0.03, repelForce: 4, linkForce: 0.35, linkDistance: 100,
+  fadeThreshold: -2, nodeSize: 1, linkThickness: 1
+};
+function resetSlider(id, valueId, val, decimals) {
+  const input = document.getElementById(id);
+  const valueEl = document.getElementById(valueId);
+  input.value = val;
+  valueEl.textContent = val.toFixed(decimals);
+}
+document.getElementById("resetIconBtn").addEventListener("click", () => {
+  Object.assign(params, DEFAULTS);
+
+  resetSlider("sCenter", "vCenter", DEFAULTS.centerForce, 2);
+  resetSlider("sRepel", "vRepel", DEFAULTS.repelForce, 1);
+  resetSlider("sLinkForce", "vLinkForce", DEFAULTS.linkForce, 2);
+  resetSlider("sLinkDist", "vLinkDist", DEFAULTS.linkDistance, 0);
+  resetSlider("sFade", "vFade", DEFAULTS.fadeThreshold, 2);
+  resetSlider("sNodeSize", "vNodeSize", DEFAULTS.nodeSize, 2);
+  resetSlider("sLinkThick", "vLinkThick", DEFAULTS.linkThickness, 2);
+
+  simulation.force("charge", d3.forceManyBody().strength(d => (d.category === "root" ? -100 : -30) * params.repelForce));
+  simulation.force("link").distance(params.linkDistance).strength(params.linkForce);
+  linkSel.style("stroke-width", params.linkThickness + "px");
+
+  // clear drag pins and reseed every node back onto its ring position
+  nodes.forEach(n => {
+    n.fx = null; n.fy = null;
+    if (n.depth === 0) { n.x = width / 2; n.y = height / 2; }
+    else {
+      const r = ringRadiusOf(n);
+      n.x = width / 2 + Math.cos(n.angle) * r;
+      n.y = height / 2 + Math.sin(n.angle) * r;
+    }
+    n.vx = 0; n.vy = 0;
+  });
+
+  // re-center the pan/zoom to its original framing
+  svg.transition().duration(400).call(zoomWithFade.transform, d3.zoomIdentity.translate(0, 0).scale(0.95));
+  applyTextFade(0.95);
+
+  simulation.alpha(1).restart();
+});
+
+// ---------------------------------------------------------------
+// Right sidebar reader — opened by clicking any graph node.
+// Node "body" text is rendered as basic markdown (paragraphs, **bold**,
+// *italic*, # headings, [links](url), - lists) so it reads like a
+// normal document rather than one long unformatted paragraph.
+// ---------------------------------------------------------------
+function renderMarkdown(src) {
+  if (!src) return "";
+  const lines = src.split(/\r?\n/);
+  let html = "";
+  let inList = false;
+  const inline = (s) => s
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) { if (inList) { html += "</ul>"; inList = false; } continue; }
+    const h = line.match(/^(#{1,3})\s+(.*)/);
+    const li = line.match(/^[-*]\s+(.*)/);
+    if (h) {
+      if (inList) { html += "</ul>"; inList = false; }
+      const level = h[1].length;
+      html += `<h${level}>${inline(h[2])}</h${level}>`;
+    } else if (li) {
+      if (!inList) { html += "<ul>"; inList = true; }
+      html += `<li>${inline(li[1])}</li>`;
+    } else {
+      if (inList) { html += "</ul>"; inList = false; }
+      html += `<p>${inline(line)}</p>`;
+    }
+  }
+  if (inList) html += "</ul>";
+  return html;
+}
+
+const sidebar = document.getElementById("sidebar");
+let selectedNodeId = null;
+
+// while the sidebar's width is animating (CSS transition), the canvas
+// keeps shrinking/growing — repeatedly recompute width/height and nudge
+// the simulation so the graph smoothly re-centers into the space left,
+// instead of jumping once at the end or sitting hidden under the panel
+function animateResizeDuring(ms) {
+  const start = performance.now();
+  function step(now) {
+    handleResize();
+    if (now - start < ms) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+function setSelected(id) {
+  selectedNodeId = id;
+  nodeSel.classed("selected", d => d.id === id);
+}
+
+function openDetail(d) {
+  document.getElementById("dKicker").textContent = d.sub2 || d.sub || "";
+  document.getElementById("dTitle").textContent = d.title;
+  document.getElementById("dBody").innerHTML = renderMarkdown(d.body || "");
+  sidebar.classList.add("open");
+  setSelected(d.id);
+  animateResizeDuring(450);
+}
+function closeDetail() {
+  sidebar.classList.remove("open");
+  setSelected(null);
+  animateResizeDuring(450);
+}
+document.querySelector(".d-close").addEventListener("click", closeDetail);
+svg.on("click", closeDetail);
+</script>
+</body>
+</html>
