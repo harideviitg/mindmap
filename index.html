@@ -108,11 +108,11 @@
     z-index: 5;
   }
   #sidebar.open {
-    width: min(440px, 90vw);
+    width: clamp(320px, 46vw, 700px);
     border-left-width: 1px;
   }
   #sidebar .sidebar-inner {
-    width: min(440px, 90vw);
+    width: clamp(320px, 46vw, 700px);
     padding: var(--sidebar-top-pad, 70px) 40px 44px 40px;
     position: relative;
   }
