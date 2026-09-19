@@ -3,6 +3,7 @@
 A node-link graph view built with [D3.js](https://d3js.org/), running a force-directed graph layout heavily inspired by Obsidian's graph view — I'm a heavy Obsidian user, so this is basically that idea pulled out onto the web.
 
 **Live:** https://harideviitg.github.io/mindmap/
+
 **Embedded into (portfolio):** https://haridev.live/mindmap/
 
 ## How it's structured
